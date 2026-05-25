@@ -216,7 +216,7 @@ namespace skilldump
         {
             if (localization.TryGetValue(internalName + "Desc", out string localized))
             {
-                return localized.Replace("[DECEA3]", "").Replace("[-]", "").Replace("/n", " ");
+                return localized.Replace("[DECEA3]", "").Replace("[-]", "").Replace("\\n", " ");
             }
             return "";
         }
@@ -231,7 +231,6 @@ namespace skilldump
         private static async Task UploadToGoogleSheetAsync(List<PlayerInfo> players, List<string> sortedSkills, Dictionary<string, string> localization)
         {
             const string applicationName = "7DaysToDie Skill Exporter";
-            const string spreadsheetId = "1JpJx1hLbj_yXfWoods2zsJaF0ucyxvAy7fxBEtl-hIM";
             const string sheetName = "Skills"; // Target a sheet named "Skills"
             const string credentialsFile = "credentials.json";
             const string spreadsheetIdFile = "spreadsheet_id.txt";
