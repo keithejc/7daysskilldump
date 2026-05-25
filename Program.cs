@@ -234,6 +234,15 @@ namespace skilldump
             const string spreadsheetId = "1JpJx1hLbj_yXfWoods2zsJaF0ucyxvAy7fxBEtl-hIM";
             const string sheetName = "Skills"; // Target a sheet named "Skills"
             const string credentialsFile = "credentials.json";
+            const string spreadsheetIdFile = "spreadsheet_id.txt";
+
+            if (!File.Exists(spreadsheetIdFile))
+            {
+                Console.WriteLine($"\nError: Spreadsheet ID file not found at '{Path.GetFullPath(spreadsheetIdFile)}'.");
+                Console.WriteLine("Please create this file and paste your Google Sheet ID into it.");
+                return;
+            }
+            string spreadsheetId = File.ReadAllText(spreadsheetIdFile).Trim();
 
             if (!File.Exists(credentialsFile))
             {
