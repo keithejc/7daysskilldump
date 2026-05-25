@@ -1,8 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Xml.Linq;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Xml.Linq;
+using Google.Apis.Auth.OAuth2;
+using Google.Apis.Services;
+using Google.Apis.Sheets.v4;
+using Google.Apis.Sheets.v4.Data;
 
 //7days to die namespaces
 
@@ -17,13 +22,13 @@ namespace skilldump
 
     internal class Program
     {
-        private static void Main(string[] args)
+        private static async Task Main(string[] args)
         {
             string basePath = @"C:\Users\keith\AppData\Roaming\7DaysToDie\Saves\Navezgane\Moo";
             string playersXmlPath = Path.Combine(basePath, "players.xml");
             string playerSaveDir = Path.Combine(basePath, "Player");
             string outputCsvPath = "PlayerSkills.csv";
-            
+
             string localizationPath = @"C:\Program Files (x86)\Steam\steamapps\common\7 Days To Die\Data\Config\Localization.txt";
             var localization = LoadLocalization(localizationPath);
 
@@ -61,7 +66,7 @@ namespace skilldump
                     Console.WriteLine($"Processing save for {player.Name}...");
 
                     // 3. Extract skills
-                    player.Skills = ExtractSkillsFromSave(playerSaveDir, player.UserId);
+                    player.Skills = ExtractSkillsFromSave(ttpFilePath);
                     foreach (var skill in player.Skills.Keys)
                     {
                         allSkillNames.Add(skill);
@@ -73,35 +78,16 @@ namespace skilldump
                 }
             }
 
-            // 4. Pivot and Write data to CSV
-            using (var writer = new StreamWriter(outputCsvPath))
-            {
-                // CSV Header
-                var headers = new List<string> { "SkillId", "SkillName", "Description" };
-                headers.AddRange(players.Select(p => $"{p.Name} SkillLevel"));
-                writer.WriteLine(string.Join(",", headers));
-
-                // CSV Rows
-                var sortedSkills = allSkillNames.ToList();
-                // Sort alphabetically by the original internal name (id) to keep groups together
-                sortedSkills.Sort(StringComparer.OrdinalIgnoreCase);
-
-                foreach (var skill in sortedSkills)
-                {
-                    var row = new List<string> { skill, GetLocalizedName(skill, localization), GetLocalizedDescription(skill, localization) };
-                    row.AddRange(players.Select(p => p.Skills.TryGetValue(skill, out int level) ? level.ToString() : "0"));
-                    writer.WriteLine(string.Join(",", row.Select(EscapeCsv)));
-                }
-            }
-
-            Console.WriteLine($"\nDone! Results saved to {Path.GetFullPath(outputCsvPath)}");
+            // 4. Upload data to Google Sheet
+            var sortedSkills = allSkillNames.ToList();
+            sortedSkills.Sort(StringComparer.OrdinalIgnoreCase);
+            await UploadToGoogleSheetAsync(players, sortedSkills, localization);
         }
 
-        private static Dictionary<string, int> ExtractSkillsFromSave(string ttpFilePath, string playerId)
+        private static Dictionary<string, int> ExtractSkillsFromSave(string fullPath)
         {
             var skills = new Dictionary<string, int>();
 
-            string fullPath = Path.Combine(ttpFilePath, $"{playerId}.ttp");
             if (!File.Exists(fullPath)) return skills;
 
             byte[] data = File.ReadAllBytes(fullPath);
@@ -228,8 +214,11 @@ namespace skilldump
 
         private static string GetLocalizedDescription(string internalName, Dictionary<string, string> localization)
         {
-            if (localization.TryGetValue(internalName + "Desc", out string localized)) return localized;
-            return ""; 
+            if (localization.TryGetValue(internalName + "Desc", out string localized))
+            {
+                return localized.Replace("[DECEA3]", "").Replace("[-]", "").Replace("/n", " ");
+            }
+            return "";
         }
 
         private static string EscapeCsv(string field)
@@ -237,6 +226,76 @@ namespace skilldump
             if (field.Contains(",") || field.Contains("\""))
                 return "\"" + field.Replace("\"", "\"\"") + "\"";
             return field;
+        }
+
+        private static async Task UploadToGoogleSheetAsync(List<PlayerInfo> players, List<string> sortedSkills, Dictionary<string, string> localization)
+        {
+            const string applicationName = "7DaysToDie Skill Exporter";
+            const string spreadsheetId = "1JpJx1hLbj_yXfWoods2zsJaF0ucyxvAy7fxBEtl-hIM";
+            const string sheetName = "Skills"; // Target a sheet named "Skills"
+            const string credentialsFile = "credentials.json";
+
+            if (!File.Exists(credentialsFile))
+            {
+                Console.WriteLine($"\nError: Google API credentials file not found at '{Path.GetFullPath(credentialsFile)}'.");
+                Console.WriteLine("Please follow the setup instructions to create and place the credentials file in the same directory as the .exe.");
+                return;
+            }
+
+            GoogleCredential credential;
+            using (var stream = new FileStream(credentialsFile, FileMode.Open, FileAccess.Read))
+            {
+                credential = GoogleCredential.FromStream(stream)
+                    .CreateScoped(SheetsService.Scope.Spreadsheets);
+            }
+
+            var service = new SheetsService(new BaseClientService.Initializer()
+            {
+                HttpClientInitializer = credential,
+                ApplicationName = applicationName,
+            });
+
+            // Prepare data for the sheet
+            var values = new List<IList<object>>();
+
+            // Header row
+            var headerRow = new List<object> { "SkillId", "SkillName", "Description" };
+            headerRow.AddRange(players.Select(p => $"{p.Name} SkillLevel"));
+            values.Add(headerRow);
+
+            // Data rows
+            foreach (var skill in sortedSkills)
+            {
+                var dataRow = new List<object>
+                {
+                    skill,
+                    GetLocalizedName(skill, localization),
+                    GetLocalizedDescription(skill, localization)
+                };
+                dataRow.AddRange(players.Select(p => p.Skills.TryGetValue(skill, out int level) ? (object)level : "0"));
+                values.Add(dataRow);
+            }
+
+            try
+            {
+                Console.WriteLine("\nClearing existing data from Google Sheet...");
+                var clearRange = $"{sheetName}!A1:Z";
+                var clearRequest = service.Spreadsheets.Values.Clear(new ClearValuesRequest(), spreadsheetId, clearRange);
+                await clearRequest.ExecuteAsync();
+
+                Console.WriteLine("Uploading new data to Google Sheet...");
+                var valueRange = new ValueRange { Values = values };
+                var updateRequest = service.Spreadsheets.Values.Update(valueRange, spreadsheetId, $"{sheetName}!A1");
+                updateRequest.ValueInputOption = SpreadsheetsResource.ValuesResource.UpdateRequest.ValueInputOptionEnum.USERENTERED;
+                await updateRequest.ExecuteAsync();
+
+                Console.WriteLine("\nSuccessfully uploaded data to Google Sheet!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\nAn error occurred while communicating with the Google Sheets API: {ex.Message}");
+                Console.WriteLine("Please ensure the service account email has 'Editor' permissions on the sheet and that the sheet is named 'Skills'.");
+            }
         }
     }
 }
