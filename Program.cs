@@ -1,4 +1,4 @@
-﻿using System;
+﻿﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -267,8 +267,9 @@ namespace skilldump
             var values = new List<IList<object>>();
 
             // Header row
-            var headerRow = new List<object> { "SkillId", "SkillName", "Description" };
+            var headerRow = new List<object> { "SkillName" };
             headerRow.AddRange(players.Select(p => $"{p.Name} SkillLevel"));
+            headerRow.Add("Description");
             values.Add(headerRow);
 
             // Data rows
@@ -276,11 +277,10 @@ namespace skilldump
             {
                 var dataRow = new List<object>
                 {
-                    skill,
-                    GetLocalizedName(skill, localization),
-                    GetLocalizedDescription(skill, localization)
+                    GetLocalizedName(skill, localization)
                 };
                 dataRow.AddRange(players.Select(p => p.Skills.TryGetValue(skill, out int level) ? (object)level : "0"));
+                dataRow.Add(GetLocalizedDescription(skill, localization));
                 values.Add(dataRow);
             }
 
